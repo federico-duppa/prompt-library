@@ -1,0 +1,12 @@
+# Virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local config (runtime, per-user)
+*.egg-info/
+.mypy_cache/
+.ruff_cache/

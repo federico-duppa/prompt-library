@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Robust launcher: uses the venv's Python by absolute path and sets PYTHONPATH,
+# so it also works from the minimal environment of a GNOME hotkey.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PY="$HERE/.venv/bin/python"
+if [[ ! -x "$PY" ]]; then
+    echo "venv not found at $HERE/.venv — run ./install.sh first." >&2
+    exit 1
+fi
+exec env PYTHONPATH="$HERE" "$PY" -m prompt_library "$@"
