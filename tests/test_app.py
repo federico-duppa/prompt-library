@@ -95,6 +95,20 @@ def test_empty_directory_shows_no_cards(qapp, monkeypatch, tmp_path):
     win.deleteLater()
 
 
+def test_display_capped_at_25_but_visible_keeps_all(qapp, monkeypatch, tmp_path):
+    for i in range(30):
+        (tmp_path / f"p{i:02d}.prompt").write_text(f"BODY {i}", encoding="utf-8")
+    monkeypatch.setattr(
+        app_module, "load_config",
+        lambda: {"directory": str(tmp_path), "hide_delay_ms": 0},
+    )
+    win = MainWindow(qapp)
+    assert len(win.prompts) == 30
+    assert len(win.visible) == 30                       # full list retained
+    assert len(win.list_host.findChildren(PromptCard)) == 25  # only 25 rendered
+    win.deleteLater()
+
+
 def test_flowlayout_basic_accounting(qapp):
     layout = FlowLayout()
     before = layout.count()
@@ -104,3 +118,28 @@ def test_flowlayout_basic_accounting(qapp):
     assert layout.count() == before + 1
     assert layout.takeAt(0) is not None
     assert layout.count() == before
+
+
+def test_grid_renders_full_5x5(qapp, monkeypatch, tmp_path):
+    """25 prompts must render as a real 5x5 grid (all 25 visible, no wrap).
+
+    Guards the QRect.right() off-by-one in FlowLayout._do_layout: with the
+    host sized to exactly 5 columns, reverting to `rect.right()` wraps the
+    5th column away (rendering 4x7, only 20 cards fit the fixed height).
+    """
+    for i in range(25):
+        (tmp_path / f"p{i:02d}.prompt").write_text("X", encoding="utf-8")
+    monkeypatch.setattr(
+        app_module, "load_config",
+        lambda: {"directory": str(tmp_path), "hide_delay_ms": 0},
+    )
+    win = MainWindow(qapp)
+    win.show()
+    qapp.processEvents()
+    qapp.processEvents()
+    cards = win.list_host.findChildren(PromptCard)
+    cols = len({c.x() for c in cards})
+    rows = len({c.y() for c in cards})
+    win.hide()
+    win.deleteLater()
+    assert (cols, rows) == (5, 5)

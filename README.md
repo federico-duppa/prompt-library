@@ -18,13 +18,14 @@ appears as a **centered modal overlay** (Alt+F2 aesthetic) that dims the rest of
 
 ## Interface
 
-- **Overlay with scrim:** the window covers the whole screen and dims the background with a
-  semi-transparent black, highlighting the dialog. The dialog is centered and has a shadow.
+- **Overlay with scrim:** the window covers the whole screen with a solid black backdrop,
+  highlighting the centered dialog (which has a border and a shadow). A see-through scrim
+  isn't possible on GNOME Wayland — a fullscreen surface has no desktop composited behind it.
 - **Closing:** `Esc` or **click on the dark area** (outside the dialog). It also hides when it
   loses focus. Clicks inside the dialog do not close it.
-- **Adaptive height:** the dialog height adjusts to the number of prompts (up to a maximum).
+- **Compact adaptive grid:** the dialog sizes itself to a compact rectangle — up to **25 prompts (5×5)** without scrolling. Fewer prompts use the smallest vertical rectangle (a square for 4, 9, 16, 25). With more than 25 matches, the first 25 are shown and you narrow them with the search box.
 - **Adjustable appearance** from the constants at the top of `prompt_library/app.py`:
-  `SCRIM_ALPHA` (background darkness, 0–255), `DIALOG_WIDTH`, `CARD_WIDTH`, `CARD_HEIGHT`.
+  `CARD_WIDTH`, `CARD_HEIGHT`, `MAX_COLS`, `MIN_DIALOG_WIDTH`.
 
 ## Why `Super+Shift+P` and not `Super+P`
 

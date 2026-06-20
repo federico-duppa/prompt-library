@@ -18,8 +18,8 @@ Flow:
   * Shows each prompt as a clickable *card* in a grid; click = copy.
   * Alt+1..Alt+9 copy the first nine visible cards.
   * After copying, the window hides to the tray a few ms later.
-  * The window covers the whole screen with a dark, semi-transparent
-    background (scrim) and centers the dialog on top, to highlight it
+  * The window covers the whole screen with a solid black backdrop
+    (scrim) and centers the dialog on top, to highlight it
     (Alt+F2 aesthetic). Click on the dark area or Esc = close.
   * Single instance: a second invocation (--show) wakes the window.
 """
@@ -51,7 +51,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSystemTrayIcon,
     QVBoxLayout,
@@ -64,19 +63,34 @@ APP_NAME = "Prompt Library"
 SERVER_NAME = f"prompt-library-{getpass.getuser()}"
 MAX_HOTKEYS = 9
 
-DIALOG_WIDTH = 720
-DIALOG_MAX_HEIGHT = 560
-DIALOG_MIN_HEIGHT = 200
 CARD_WIDTH = 164
 CARD_HEIGHT = 96
 CARD_SPACING = 10
-SCRIM_ALPHA = 150  # 0..255, how dark the background gets
+DIALOG_MARGIN = 16        # side padding inside the dialog frame
+MIN_DIALOG_WIDTH = 380    # keep the search row usable even for a 1-column grid
+EMPTY_DIALOG_WIDTH = 440  # width used for the "no prompts / no match" message
+MAX_COLS = 5              # the grid is at most MAX_COLS x MAX_COLS
+MAX_GRID = MAX_COLS * MAX_COLS  # 25 cards fit without scroll; search to see more
+
+
+def grid_dims(n: int) -> tuple[int, int]:
+    """Return (cols, rows) for a compact, vertical-leaning grid.
+
+    The grid is the smallest rectangle that holds ``n`` cards (clamped to
+    1..MAX_GRID), capped at MAX_COLS x MAX_COLS. Perfect squares (4, 9, 16,
+    25) become squares; every other count becomes a vertical rectangle
+    (``rows >= cols``), e.g. 5 -> 2x3, 7 -> 2x4, 13 -> 3x5.
+    """
+    n = max(1, min(n, MAX_GRID))
+    cols = max(math.ceil(n / MAX_COLS), math.isqrt(n))
+    rows = math.ceil(n / cols)
+    return cols, rows
 
 STYLESHEET = """
-QWidget#root { background: transparent; }
+QWidget#root { background: #000; }
 QFrame#overlay {
     background: #23242c;
-    border: 1px solid #41444f;
+    border: 2px solid #5b6173;
     border-radius: 16px;
 }
 QLineEdit {
@@ -178,7 +192,9 @@ class FlowLayout(QLayout):
         m = self.contentsMargins()
         x = rect.x() + m.left()
         y = rect.y() + m.top()
-        right = rect.right() - m.right()
+        # Use width (not QRect.right(), which is x + width - 1) so a container
+        # sized to fit exactly N columns does not wrap off the last one.
+        right = rect.x() + rect.width() - m.right()
         line_height = 0
         for item in self._items:
             hint = item.sizeHint()
@@ -232,23 +248,26 @@ class MainWindow(QWidget):
     def __init__(self, app: QApplication):
         super().__init__()
         self.app = app
+        self.app.setStyleSheet(STYLESHEET)
         self.config = load_config()
         self.hide_delay_ms = int(self.config.get("hide_delay_ms", 250))
+        self.directory = ""
         self.prompts: list[dict] = []   # [{name, path}]
         self.visible: list[dict] = []
         self._tray_hint_shown = False
         self._autohide_armed = False
         self._suppress_autohide = False
 
-        # Full-screen, frameless and translucent window: we paint the
-        # background as a dark scrim and center the dialog on top.
+        # Full-screen, frameless window painted solid black as a scrim, with
+        # the dialog centered on top. (A see-through scrim isn't possible on
+        # GNOME Wayland: a fullscreen surface has no desktop composited behind
+        # it, so the backdrop is opaque regardless of alpha.)
         self.setObjectName("root")
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(make_icon())
         self.setWindowFlags(
             Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
 
         self._status_timer = QTimer(self)
         self._status_timer.setSingleShot(True)
@@ -270,7 +289,7 @@ class MainWindow(QWidget):
 
         self.dialog_frame = QFrame()
         self.dialog_frame.setObjectName("overlay")
-        self.dialog_frame.setFixedWidth(DIALOG_WIDTH)
+        # Width/height are sized to the grid in _fit_dialog().
         shadow = QGraphicsDropShadowEffect(self.dialog_frame)
         shadow.setBlurRadius(48)
         shadow.setOffset(0, 10)
@@ -310,15 +329,17 @@ class MainWindow(QWidget):
         self.path_lbl.setObjectName("path")
         root.addWidget(self.path_lbl)
 
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setFrameShape(QFrame.NoFrame)
+        # The card grid is sized to exactly N columns and centered, so the
+        # dialog can stay wider (for the search row) than a narrow grid.
+        grid_row = QHBoxLayout()
+        grid_row.setContentsMargins(0, 0, 0, 0)
+        grid_row.addStretch(1)
         self.list_host = QWidget()
         self.list_host.setObjectName("listhost")
         self.flow = FlowLayout(self.list_host, margin=0, spacing=CARD_SPACING)
-        self.scroll.setWidget(self.list_host)
-        root.addWidget(self.scroll, 1)
+        grid_row.addWidget(self.list_host)
+        grid_row.addStretch(1)
+        root.addLayout(grid_row)
 
         self.status_lbl = QLabel("")
         self.status_lbl.setObjectName("status")
@@ -348,16 +369,14 @@ class MainWindow(QWidget):
     # ---------- data ----------
     def reload_prompts(self) -> None:
         directory = self.config.get("directory", "")
+        self.directory = directory if directory and Path(directory).is_dir() else ""
         self.prompts = []
-        if directory and Path(directory).is_dir():
+        if self.directory:
             files = sorted(
-                Path(directory).glob("*.prompt"),
+                Path(self.directory).glob("*.prompt"),
                 key=lambda p: p.stem.lower(),
             )
             self.prompts = [{"name": p.stem, "path": str(p)} for p in files]
-            self.path_lbl.setText(f"📂 {directory}  ·  {len(self.prompts)} prompts")
-        else:
-            self.path_lbl.setText("No folder selected")
         self.rebuild_list()
 
     def rebuild_list(self) -> None:
@@ -365,6 +384,7 @@ class MainWindow(QWidget):
             item = self.flow.takeAt(0)
             w = item.widget()
             if w is not None:
+                w.setParent(None)  # remove from view now; deleteLater is deferred
                 w.deleteLater()
 
         query = self.search.text().strip().lower()
@@ -373,30 +393,47 @@ class MainWindow(QWidget):
         else:
             self.visible = list(self.prompts)
 
+        self._update_path_label()
+
         if not self.prompts:
             self._add_empty("No prompts. Choose a folder with .prompt files 📁")
         elif not self.visible:
             self._add_empty("No prompt matches the search.")
         else:
-            for i, p in enumerate(self.visible):
+            # Show at most MAX_GRID cards; the rest are reachable via search.
+            for i, p in enumerate(self.visible[:MAX_GRID]):
                 hotkey = f"Alt+{i + 1}" if i < MAX_HOTKEYS else ""
                 card = PromptCard(p["name"], hotkey)
                 card.clicked.connect(lambda pp=p: self.copy_prompt(pp))
                 self.flow.addWidget(card)
 
-        self.list_host.adjustSize()
-        self._fit_dialog_height()
+        self._fit_dialog()
 
-    def _fit_dialog_height(self) -> None:
-        """Fits the dialog height to the content, up to a maximum."""
-        n = len(self.visible) if self.prompts else 1
-        inner_w = DIALOG_WIDTH - 32  # side margins
-        cols = max(1, (inner_w + CARD_SPACING) // (CARD_WIDTH + CARD_SPACING))
-        rows = max(1, math.ceil(n / cols))
-        content = rows * CARD_HEIGHT + (rows - 1) * CARD_SPACING
-        chrome = 132  # search box + path + status + margins
-        height = min(DIALOG_MAX_HEIGHT, max(DIALOG_MIN_HEIGHT, chrome + content))
-        self.dialog_frame.setFixedHeight(int(height))
+    def _update_path_label(self) -> None:
+        if not self.directory:
+            self.path_lbl.setText("No folder selected")
+            return
+        text = f"📂 {self.directory}  ·  {len(self.prompts)} prompts"
+        if len(self.visible) > MAX_GRID:
+            text += f"  ·  showing first {MAX_GRID}, refine your search"
+        self.path_lbl.setText(text)
+
+    def _fit_dialog(self) -> None:
+        """Size the grid and dialog to a compact grid (no scrolling)."""
+        if self.prompts and self.visible:
+            cols, rows = grid_dims(len(self.visible))
+            inner_w = cols * CARD_WIDTH + (cols - 1) * CARD_SPACING
+            inner_h = rows * CARD_HEIGHT + (rows - 1) * CARD_SPACING
+            dialog_w = max(MIN_DIALOG_WIDTH, inner_w + 2 * DIALOG_MARGIN)
+        else:
+            inner_w = EMPTY_DIALOG_WIDTH - 2 * DIALOG_MARGIN
+            inner_h = CARD_HEIGHT
+            dialog_w = EMPTY_DIALOG_WIDTH
+
+        # Fixing the grid size makes the FlowLayout wrap at exactly `cols`.
+        self.list_host.setFixedSize(inner_w, inner_h)
+        self.dialog_frame.setFixedWidth(dialog_w)
+        self.dialog_frame.setFixedHeight(self.dialog_frame.layout().sizeHint().height())
 
     def _add_empty(self, text: str) -> None:
         lbl = QLabel(text)
@@ -472,9 +509,9 @@ class MainWindow(QWidget):
 
     # ---------- scrim / close ----------
     def paintEvent(self, event):  # noqa: N802
-        # Dark, semi-transparent background that highlights the dialog.
+        # Solid black backdrop that highlights the dialog.
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, SCRIM_ALPHA))
+        painter.fillRect(self.rect(), QColor(0, 0, 0))
 
     def mousePressEvent(self, event):  # noqa: N802
         # Click on the dark area (outside the dialog) => close.

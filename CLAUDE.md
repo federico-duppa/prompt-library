@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A small Ubuntu/GNOME (X11 + Wayland) desktop tray app written in Python + PySide6. It scans a folder for `*.prompt` files and shows them as clickable cards in a centered, scrim-dimmed modal overlay; clicking a card (or pressing `Alt+1..9`) copies that prompt's text to the clipboard, then hides back to the tray.
+A small Ubuntu/GNOME (X11 + Wayland) desktop tray app written in Python + PySide6. It scans a folder for `*.prompt` files and shows them as clickable cards in a centered modal over a full-screen black scrim; clicking a card (or pressing `Alt+1..9`) copies that prompt's text to the clipboard, then hides back to the tray.
 
 ## Commands
 
@@ -45,11 +45,12 @@ Three modules under `prompt_library/` (run as `python -m prompt_library`):
 
 ### Key design points
 
-- **Overlay model, not a normal window.** `MainWindow` is a frameless, translucent, full-screen `Qt.Dialog` that paints a dark scrim (`paintEvent`) and centers the dialog frame using layout stretches. Clicking the dark area (`mousePressEvent`) or `Esc` hides to tray. `closeEvent` is overridden to hide instead of quit.
+- **Overlay model, not a normal window.** `MainWindow` is a frameless, full-screen `Qt.Dialog` that paints a solid black scrim (`paintEvent`) and centers the dialog frame using layout stretches. Clicking the dark area (`mousePressEvent`) or `Esc` hides to tray. `closeEvent` is overridden to hide instead of quit. The scrim is opaque on purpose: GNOME Wayland doesn't composite the desktop behind a fullscreen surface, so a see-through scrim renders black regardless of alpha — translucency was removed rather than left as dead config.
 - **Autohide-on-focus-loss is gated.** After `summon()`, autohide is *armed* only after a ~450ms delay (`_arm_autohide`) and suppressed during native dialogs (`_suppress_autohide`, used around `choose_directory`'s `QFileDialog`). This prevents the window from vanishing the instant it gains/loses focus or while a file picker is open. Be careful editing the show/hide flow — these flags interact.
-- **Cards and hotkeys are rebuilt from filtered state.** `reload_prompts()` reads the folder (flat, non-recursive `glob("*.prompt")`, sorted by stem); `rebuild_list()` filters by the search box into `self.visible` and re-creates all `PromptCard`s. `Alt+1..9` map to the first nine entries of `self.visible`, so the numbering follows the current search filter. `_fit_dialog_height()` computes column/row count to size the dialog to its content up to `DIALOG_MAX_HEIGHT`.
+- **Cards and hotkeys are rebuilt from filtered state.** `reload_prompts()` reads the folder (flat, non-recursive `glob("*.prompt")`, sorted by stem); `rebuild_list()` filters by the search box into `self.visible` and renders the first `MAX_GRID` (25) as `PromptCard`s (the rest stay reachable via search — `self.visible` keeps the full filtered list). `Alt+1..9` map to the first nine entries of `self.visible`, so the numbering follows the current search filter.
+- **The grid is sized to a compact rectangle, never scrolls.** `grid_dims(n)` (module-level, unit-tested in `tests/test_grid.py`) returns `(cols, rows)` for the smallest vertical rectangle holding `n` cards — capped at 5×5, perfect squares (4/9/16/25) become squares. `_fit_dialog()` sets `list_host` to exactly that pixel size (so `FlowLayout` wraps at `cols`) and centers it; the dialog frame sizes its width to fit the grid (floored at `MIN_DIALOG_WIDTH` so the search row stays usable) and its height to the layout's `sizeHint`. There is no `QScrollArea`. Note: `FlowLayout._do_layout` must use `rect.x() + rect.width()` for the right edge, not `QRect.right()` (off by one) — otherwise a container sized to exactly `cols` wraps off its last column.
 - **Prompt display name** is the filename stem: `summarize text.prompt` → "summarize text".
-- **Tunable layout constants** live at the top of `app.py`: `SCRIM_ALPHA`, `DIALOG_WIDTH`, `DIALOG_MAX_HEIGHT`, `CARD_WIDTH`, `CARD_HEIGHT`, `CARD_SPACING`, `MAX_HOTKEYS`. The whole visual theme is one `STYLESHEET` string (Qt CSS via object names like `#card`, `#overlay`, `#badge`).
+- **Tunable layout constants** live at the top of `app.py`: `CARD_WIDTH`, `CARD_HEIGHT`, `CARD_SPACING`, `MAX_COLS`/`MAX_GRID` (grid cap), `MIN_DIALOG_WIDTH`, `EMPTY_DIALOG_WIDTH`, `DIALOG_MARGIN`, `MAX_HOTKEYS`. The whole visual theme is one `STYLESHEET` string applied via `app.setStyleSheet` in `MainWindow.__init__` (Qt CSS through object names like `#card`, `#overlay`, `#badge`).
 
 ### Global hotkey (Wayland constraint)
 
