@@ -27,14 +27,12 @@ from __future__ import annotations
 
 import getpass
 import math
-import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
-    QGuiApplication,
     QIcon,
     QKeySequence,
     QPainter,

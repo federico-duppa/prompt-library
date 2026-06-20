@@ -87,6 +87,14 @@ Config in `~/.config/prompt-library/config.json` (`directory`, `hide_delay_ms`).
 - GNOME (the tray icon needs the AppIndicator/StatusNotifier extension,
   which Ubuntu ships enabled by default).
 
+## Development
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
+.venv/bin/python -m pytest        # tests (headless, Qt offscreen)
+.venv/bin/ruff check .            # lint
+```
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
