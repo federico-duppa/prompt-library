@@ -65,6 +65,32 @@ You can choose another combination at install time.
 - autostart at login (starts hidden in the tray, `--tray`),
 - the global hotkey registered.
 
+### Debian package (`.deb`)
+
+For handing the app to other desktops, build a self-contained `.deb` that bundles
+its own PySide6/Qt — it installs and runs on any reasonably recent Debian/Ubuntu
+desktop regardless of whether the distro packages PySide6:
+
+```bash
+packaging/build-deb.sh            # -> dist/prompt-library_<version>_amd64.deb
+PRUNE=1 packaging/build-deb.sh    # smaller: drops Qt modules the app never uses
+```
+
+Build it on a Debian/Ubuntu host (ideally the oldest release you want to support,
+e.g. Ubuntu 22.04, so the dependency names resolve everywhere); it needs internet
+to fetch the PySide6 wheel and produces an `amd64` package (arm64 = a separate
+build on an arm64 host). Then on the target machine:
+
+```bash
+sudo apt install ./prompt-library_<version>_amd64.deb   # resolves dependencies
+```
+
+This installs the app under `/opt/prompt-library`, a `/usr/bin/prompt-library`
+launcher, a menu entry, **system-wide autostart** (`/etc/xdg/autostart`, applies
+to every user), and the icon. The global hotkey can't be set at install time
+(it's per-user gsettings), so the app registers `Super+Shift+P` itself the first
+time each user opens it — re-run `prompt-library-hotkey '<binding>'` to change it.
+
 ### Just the command (pip / pipx)
 
 The project is a regular Python package with a `prompt-library` console entry point:
@@ -102,10 +128,11 @@ This gives you the app and the tray; wire up a hotkey yourself with `./setup-hot
 ## Structure
 
 ```
-prompt_library/        Python package (app.py, __main__.py, config.py)
+prompt_library/        Python package (app.py, __main__.py, config.py, hotkey.py)
 prompt-library         launcher (uses the venv's python by absolute path)
 install.sh             full installation
 setup-hotkey.sh        registers/removes the GNOME global hotkey
+packaging/build-deb.sh builds a self-contained .deb (bundles PySide6/Qt)
 examples/              example prompts
 assets/                screenshots
 pyproject.toml         single source of truth: deps, dev extra, entry point, tooling

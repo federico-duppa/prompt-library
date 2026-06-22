@@ -6,6 +6,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Build artifacts (Debian package)
+/build/
+/dist/
+*.deb
+
 # Local config (runtime, per-user)
 *.egg-info/
 .mypy_cache/

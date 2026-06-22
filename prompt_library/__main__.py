@@ -27,6 +27,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 
 from .app import APP_NAME, SERVER_NAME, MainWindow, make_icon
+from .hotkey import ensure_hotkey_registered
 
 
 def _notify_running_instance() -> bool:
@@ -78,6 +79,9 @@ def main() -> int:
         conn.readyRead.connect(on_ready)
 
     server.newConnection.connect(on_new_connection)
+
+    # First-launch convenience: register the GNOME global hotkey for this user.
+    ensure_hotkey_registered()
 
     start_hidden = "--tray" in argv
     if start_hidden:
