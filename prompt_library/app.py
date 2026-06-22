@@ -548,7 +548,13 @@ class MainWindow(QWidget):
         # Fixing the grid size makes the FlowLayout wrap at exactly `cols`.
         self.list_host.setFixedSize(inner_w, inner_h)
         self.dialog_frame.setFixedWidth(dialog_w)
-        self.dialog_frame.setFixedHeight(self.dialog_frame.layout().sizeHint().height())
+        # Recompute the frame layout now: after cards are added/removed the
+        # layout's sizeHint is stale until the next event loop, so reading it
+        # directly would keep the old height and clip newly added rows. An
+        # explicit activate() forces a synchronous recalculation.
+        frame_layout = self.dialog_frame.layout()
+        frame_layout.activate()
+        self.dialog_frame.setFixedHeight(frame_layout.sizeHint().height())
 
     def _add_empty(self, text: str) -> None:
         lbl = QLabel(text)
@@ -590,6 +596,9 @@ class MainWindow(QWidget):
     # ---------- visibility ----------
     def summon(self) -> None:
         self._autohide_armed = False
+        # Re-scan the folder on every open (e.g. via the hotkey), so prompts
+        # added or removed since last time show up without a manual reload.
+        self.reload_prompts()
         # Open on the screen under the cursor (multi-monitor), not just primary.
         screen = QGuiApplication.screenAt(QCursor.pos())
         if screen is None:
