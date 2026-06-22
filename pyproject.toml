@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prompt-library"
-version = "0.1.0"
+version = "0.2.0"
 description = "A GNOME tray app to copy reusable prompts to the clipboard with a click or a hotkey"
 readme = "README.md"
 requires-python = ">=3.10"
