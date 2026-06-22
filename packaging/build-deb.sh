@@ -25,7 +25,9 @@ PKG="prompt-library"
 PREFIX="/opt/prompt-library"          # where the app + vendored libs live
 LIBDIR_REL="$PREFIX/lib"              # PYTHONPATH target
 
-VERSION="$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+# Version is single-sourced in prompt_library/__init__.py (pyproject reads it
+# dynamically via hatchling), so parse it from there.
+VERSION="$(grep -m1 '^__version__' prompt_library/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')"
 ARCH="$(dpkg --print-architecture)"
 MAINTAINER="Federico De Malmayne Duppa <fduppa@gmail.com>"
 

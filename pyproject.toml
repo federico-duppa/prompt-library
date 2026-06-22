@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prompt-library"
-version = "0.2.0"
+dynamic = ["version"]   # single source of truth: prompt_library/__init__.py
 description = "A GNOME tray app to copy reusable prompts to the clipboard with a click or a hotkey"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,6 +32,9 @@ Issues = "https://github.com/federico-duppa/prompt-library/issues"
 
 [project.scripts]
 prompt-library = "prompt_library.__main__:main"
+
+[tool.hatch.version]
+path = "prompt_library/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["prompt_library"]
