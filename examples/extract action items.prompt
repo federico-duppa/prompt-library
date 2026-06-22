@@ -1,0 +1,2 @@
+From the notes below, extract every action item as a checklist.
+Format: "- [ ] <owner>: <task> (due <date or n/a>)". Omit anything that is not actionable:

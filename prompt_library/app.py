@@ -27,14 +27,18 @@ from __future__ import annotations
 
 import getpass
 import math
+import random
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QCursor,
+    QGuiApplication,
     QIcon,
     QKeySequence,
+    QLinearGradient,
     QPainter,
     QPen,
     QPixmap,
@@ -72,6 +76,14 @@ EMPTY_DIALOG_WIDTH = 440  # width used for the "no prompts / no match" message
 MAX_COLS = 5              # the grid is at most MAX_COLS x MAX_COLS
 MAX_GRID = MAX_COLS * MAX_COLS  # 25 cards fit without scroll; search to see more
 
+# --- animated scrim (twinkling starfield + shooting stars) ---
+SCRIM_FPS = 32               # animation refresh rate while the overlay is visible
+STAR_COUNT = 110             # static background stars
+METEOR_MAX = 3               # max shooting stars on screen at once
+METEOR_SPAWN_CHANCE = 0.035  # probability of spawning one per frame (under the cap)
+STAR_COLOR = (208, 218, 255)     # cool white
+METEOR_COLOR = (120, 150, 255)   # faint blue trail, matching the accent
+
 
 def grid_dims(n: int) -> tuple[int, int]:
     """Return (cols, rows) for a compact, vertical-leaning grid.
@@ -85,6 +97,86 @@ def grid_dims(n: int) -> tuple[int, int]:
     cols = max(math.ceil(n / MAX_COLS), math.isqrt(n))
     rows = math.ceil(n / cols)
     return cols, rows
+
+
+class _Star:
+    """A static background star with a per-star twinkle phase."""
+
+    __slots__ = ("x", "y", "r", "alpha", "phase")
+
+    def __init__(self, x: float, y: float, r: float, alpha: int, phase: float):
+        self.x = x
+        self.y = y
+        self.r = r
+        self.alpha = alpha
+        self.phase = phase
+
+
+class Meteor:
+    """A shooting star: a head moving at constant velocity with a fading trail.
+
+    Pure geometry/lifetime logic (no Qt), so it is unit-testable on its own;
+    the painting lives in ``MainWindow._draw_meteor``.
+    """
+
+    def __init__(self, x, y, vx, vy, length, life):
+        self.x = x
+        self.y = y
+        self.vx = vx
+        self.vy = vy
+        self.length = length
+        self.life = life      # frames to live
+        self.age = 0
+
+    def advance(self) -> None:
+        self.x += self.vx
+        self.y += self.vy
+        self.age += 1
+
+    @property
+    def done(self) -> bool:
+        return self.age >= self.life
+
+    def alpha(self) -> float:
+        """Overall opacity 0..1 — quick fade-in, gentle fade-out near the end."""
+        fade_in = min(1.0, self.age / 6.0)
+        fade_out = min(1.0, (self.life - self.age) / 12.0)
+        return max(0.0, fade_in * fade_out)
+
+
+def spawn_meteor(w: float, h: float) -> Meteor:
+    """Make a shooting star that enters near the top and streaks down-right."""
+    angle = math.radians(random.uniform(20, 38))
+    speed = random.uniform(16, 30)
+    vx = speed * math.cos(angle)
+    vy = speed * math.sin(angle)
+    x = random.uniform(-0.15 * w, 0.85 * w)
+    y = random.uniform(-0.30 * h, -0.02 * h)
+    length = random.uniform(160, 340)
+    life = int((h - y + length) / max(1.0, vy)) + 6
+    return Meteor(x, y, vx, vy, length, life)
+
+
+def _rgba(rgb: tuple[int, int, int], alpha_f: float) -> QColor:
+    """Build a QColor from an (r, g, b) tuple and a 0..1 alpha."""
+    color = QColor(*rgb)
+    color.setAlphaF(max(0.0, min(1.0, alpha_f)))
+    return color
+
+
+def make_starfield(w: float, h: float, n: int = STAR_COUNT) -> list[_Star]:
+    """Scatter ``n`` static stars across a ``w`` x ``h`` area."""
+    return [
+        _Star(
+            x=random.uniform(0, w),
+            y=random.uniform(0, h),
+            r=random.uniform(0.5, 1.7),
+            alpha=random.randint(25, 150),
+            phase=random.uniform(0, 2 * math.pi),
+        )
+        for _ in range(n)
+    ]
+
 
 STYLESHEET = """
 QWidget#root { background: #000; }
@@ -115,12 +207,18 @@ QLabel#badge {
     color: #cdd2ff; background: #404663; border-radius: 6px;
     padding: 1px 6px; font-size: 10px; font-weight: bold;
 }
-QScrollArea, QWidget#listhost { background: transparent; border: none; }
+QWidget#listhost { background: transparent; border: none; }
 """
 
 
+_icon: QIcon | None = None
+
+
 def make_icon() -> QIcon:
-    """Draws a clipboard icon without depending on external files."""
+    """Return the clipboard icon (drawn once in code, then cached)."""
+    global _icon
+    if _icon is not None:
+        return _icon
     pm = QPixmap(64, 64)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -136,7 +234,8 @@ def make_icon() -> QIcon:
     for y in (28, 36, 44):
         p.drawLine(20, y, 44, y)
     p.end()
-    return QIcon(pm)
+    _icon = QIcon(pm)
+    return _icon
 
 
 class FlowLayout(QLayout):
@@ -248,7 +347,7 @@ class MainWindow(QWidget):
     def __init__(self, app: QApplication):
         super().__init__()
         self.app = app
-        self.app.setStyleSheet(STYLESHEET)
+        self.setStyleSheet(STYLESHEET)  # scoped to this window, not the whole app
         self.config = load_config()
         self.hide_delay_ms = int(self.config.get("hide_delay_ms", 250))
         self.directory = ""
@@ -257,6 +356,15 @@ class MainWindow(QWidget):
         self._tray_hint_shown = False
         self._autohide_armed = False
         self._suppress_autohide = False
+
+        # Animated scrim: a twinkling starfield with occasional shooting stars,
+        # ticked only while the overlay is visible (see summon/hide_to_tray).
+        self._frame = 0
+        self._stars: list[_Star] = []
+        self._meteors: list[Meteor] = []
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(int(1000 / SCRIM_FPS))
+        self._anim_timer.timeout.connect(self._tick_scrim)
 
         # Full-screen, frameless window painted solid black as a scrim, with
         # the dialog centered on top. (A see-through scrim isn't possible on
@@ -419,9 +527,16 @@ class MainWindow(QWidget):
         self.path_lbl.setText(text)
 
     def _fit_dialog(self) -> None:
-        """Size the grid and dialog to a compact grid (no scrolling)."""
+        """Size the grid and dialog to a compact grid (no scrolling).
+
+        Columns are fixed by the folder's prompt count (stable width), so the
+        dialog does not jump around as a live search narrows the matches; only
+        the row count (height) adapts to what is currently shown.
+        """
         if self.prompts and self.visible:
-            cols, rows = grid_dims(len(self.visible))
+            cols, _ = grid_dims(min(len(self.prompts), MAX_GRID))
+            shown = min(len(self.visible), MAX_GRID)
+            rows = math.ceil(shown / cols)
             inner_w = cols * CARD_WIDTH + (cols - 1) * CARD_SPACING
             inner_h = rows * CARD_HEIGHT + (rows - 1) * CARD_SPACING
             dialog_w = max(MIN_DIALOG_WIDTH, inner_w + 2 * DIALOG_MARGIN)
@@ -475,6 +590,18 @@ class MainWindow(QWidget):
     # ---------- visibility ----------
     def summon(self) -> None:
         self._autohide_armed = False
+        # Open on the screen under the cursor (multi-monitor), not just primary.
+        screen = QGuiApplication.screenAt(QCursor.pos())
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            self.setScreen(screen)
+            geo = screen.geometry()
+            self.setGeometry(geo)
+            self._stars = make_starfield(geo.width(), geo.height())
+        self._meteors = []
+        self._frame = 0
+        self._anim_timer.start()
         self.showFullScreen()
         self.raise_()
         self.activateWindow()
@@ -487,6 +614,7 @@ class MainWindow(QWidget):
 
     def hide_to_tray(self) -> None:
         self._autohide_armed = False
+        self._anim_timer.stop()  # no animation work while hidden
         self.hide()
         if not self._tray_hint_shown:
             self._tray_hint_shown = True
@@ -508,10 +636,59 @@ class MainWindow(QWidget):
         self.app.quit()
 
     # ---------- scrim / close ----------
+    def _tick_scrim(self) -> None:
+        self._frame += 1
+        w, h = self.width(), self.height()
+        for mt in self._meteors:
+            mt.advance()
+        self._meteors = [
+            mt for mt in self._meteors
+            if not mt.done and mt.x - mt.length < w and mt.y - mt.length < h
+        ]
+        if len(self._meteors) < METEOR_MAX and random.random() < METEOR_SPAWN_CHANCE:
+            self._meteors.append(spawn_meteor(w, h))
+        self.update()
+
     def paintEvent(self, event):  # noqa: N802
-        # Solid black backdrop that highlights the dialog.
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(0, 0, 0))
+        painter.fillRect(self.rect(), QColor(0, 0, 0))  # solid black backdrop
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        # Twinkling starfield.
+        painter.setPen(Qt.NoPen)
+        for s in self._stars:
+            twinkle = 0.55 + 0.45 * math.sin(self._frame * 0.05 + s.phase)
+            color = QColor(*STAR_COLOR)
+            color.setAlpha(max(0, min(255, int(s.alpha * twinkle))))
+            painter.setBrush(color)
+            painter.drawEllipse(QPointF(s.x, s.y), s.r, s.r)
+
+        # Shooting stars on top.
+        for mt in self._meteors:
+            self._draw_meteor(painter, mt)
+
+    def _draw_meteor(self, painter: QPainter, mt: Meteor) -> None:
+        a = mt.alpha()
+        if a <= 0.0:
+            return
+        speed = math.hypot(mt.vx, mt.vy) or 1.0
+        ux, uy = mt.vx / speed, mt.vy / speed
+        head = QPointF(mt.x, mt.y)
+        tail = QPointF(mt.x - ux * mt.length, mt.y - uy * mt.length)
+
+        grad = QLinearGradient(head, tail)
+        grad.setColorAt(0.0, _rgba(STAR_COLOR, 0.9 * a))
+        grad.setColorAt(0.4, _rgba(METEOR_COLOR, 0.35 * a))
+        grad.setColorAt(1.0, _rgba(METEOR_COLOR, 0.0))
+        pen = QPen(QBrush(grad), 2.2)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(head, tail)
+
+        # Bright head.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(_rgba((235, 240, 255), a))
+        painter.drawEllipse(head, 1.9, 1.9)
 
     def mousePressEvent(self, event):  # noqa: N802
         # Click on the dark area (outside the dialog) => close.

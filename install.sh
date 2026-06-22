@@ -11,8 +11,8 @@ if [[ ! -d "$HERE/.venv" ]]; then
     python3 -m venv "$HERE/.venv"
 fi
 "$HERE/.venv/bin/python" -m pip install --upgrade pip -q
-echo "==> Installing PySide6 (this may take a while)…"
-"$HERE/.venv/bin/python" -m pip install -q -r "$HERE/requirements.txt"
+echo "==> Installing the app and PySide6 (this may take a while)…"
+"$HERE/.venv/bin/python" -m pip install -q -e "$HERE"
 
 chmod +x "$LAUNCHER" "$HERE/setup-hotkey.sh"
 

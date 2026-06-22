@@ -1,14 +1,24 @@
 # Prompt Library
 
-A small desktop app for Ubuntu (GNOME/Wayland) that lives in the **system tray**
-and lets you copy prompts to the clipboard with a click or with `Alt+<number>`. It
-appears as a **centered modal overlay** (Alt+F2 aesthetic) that dims the rest of the screen.
+[![CI](https://github.com/federico-duppa/prompt-library/actions/workflows/ci.yml/badge.svg)](https://github.com/federico-duppa/prompt-library/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![Built with PySide6](https://img.shields.io/badge/built%20with-PySide6-41cd52)](https://doc.qt.io/qtforpython/)
+
+A keyboard-first **prompt launcher** for Ubuntu (GNOME / Wayland). It lives in the **system
+tray**, and a global hotkey pops a focused, full-screen "command palette": pick a saved prompt
+and it's on your clipboard in one click — or one `Alt+<number>`. Built for the copy-paste loop
+of working with LLMs.
+
+<p align="center">
+  <img src="assets/screenshot.png" alt="Prompt Library — a grid of prompt cards over a starfield, with a shooting star streaking past" width="620">
+</p>
 
 ## What it does
 
 - Scans a folder (flat, non-recursive) looking for `*.prompt` files.
 - Shows each prompt by its name (`summarize text.prompt` → **summarize text**)
-  as **cards in a grid** (fixed width, designed not to get in the way of autotiling).
+  as **cards in a compact, auto-sized grid** (up to a 5×5 of 25 prompts, no scrolling).
 - **Click** a card → copies its content to the clipboard.
 - **Alt+1 … Alt+9** → copy the first nine visible cards (the badge shows it on each one).
 - After copying, the window hides to the tray a few ms later.
@@ -18,14 +28,18 @@ appears as a **centered modal overlay** (Alt+F2 aesthetic) that dims the rest of
 
 ## Interface
 
-- **Overlay with scrim:** the window covers the whole screen with a solid black backdrop,
-  highlighting the centered dialog (which has a border and a shadow). A see-through scrim
-  isn't possible on GNOME Wayland — a fullscreen surface has no desktop composited behind it.
+- **Animated night-sky scrim:** the window covers the whole screen with a black backdrop
+  that comes alive — a softly twinkling starfield with the occasional **shooting star**
+  streaking past — focusing attention on the centered dialog (which has a border and a
+  shadow). The animation only runs while the overlay is visible, then stops. (A see-through
+  scrim isn't possible on GNOME Wayland — a fullscreen surface has no desktop behind it —
+  so this turns that constraint into a feature.)
 - **Closing:** `Esc` or **click on the dark area** (outside the dialog). It also hides when it
   loses focus. Clicks inside the dialog do not close it.
 - **Compact adaptive grid:** the dialog sizes itself to a compact rectangle — up to **25 prompts (5×5)** without scrolling. Fewer prompts use the smallest vertical rectangle (a square for 4, 9, 16, 25). With more than 25 matches, the first 25 are shown and you narrow them with the search box.
 - **Adjustable appearance** from the constants at the top of `prompt_library/app.py`:
-  `CARD_WIDTH`, `CARD_HEIGHT`, `MAX_COLS`, `MIN_DIALOG_WIDTH`.
+  `CARD_WIDTH`, `CARD_HEIGHT`, `MAX_COLS`, `MIN_DIALOG_WIDTH`, and the scrim animation
+  (`SCRIM_FPS`, `STAR_COUNT`, `METEOR_MAX`, `METEOR_SPAWN_CHANCE`, `STAR_COLOR`, `METEOR_COLOR`).
 
 ## Why `Super+Shift+P` and not `Super+P`
 
@@ -38,8 +52,10 @@ You can choose another combination at install time.
 
 ## Installation
 
+### Recommended: full GNOME integration
+
 ```bash
-./install.sh                 # venv + PySide6 + icon + menu + autostart + Super+Shift+P hotkey
+./install.sh                 # venv + app + icon + menu + autostart + Super+Shift+P hotkey
 # or with another combination:
 ./install.sh '<Control><Alt>p'
 ```
@@ -48,6 +64,19 @@ You can choose another combination at install time.
 - the app in the applications menu,
 - autostart at login (starts hidden in the tray, `--tray`),
 - the global hotkey registered.
+
+### Just the command (pip / pipx)
+
+The project is a regular Python package with a `prompt-library` console entry point:
+
+```bash
+pipx install .          # isolated install, exposes the `prompt-library` command
+# or, in a virtualenv:
+pip install .
+prompt-library          # run it
+```
+
+This gives you the app and the tray; wire up a hotkey yourself with `./setup-hotkey.sh`.
 
 ### Hotkey only (if you already have the venv)
 
@@ -78,6 +107,8 @@ prompt-library         launcher (uses the venv's python by absolute path)
 install.sh             full installation
 setup-hotkey.sh        registers/removes the GNOME global hotkey
 examples/              example prompts
+assets/                screenshots
+pyproject.toml         single source of truth: deps, dev extra, entry point, tooling
 ```
 
 Config in `~/.config/prompt-library/config.json` (`directory`, `hide_delay_ms`).
@@ -91,7 +122,7 @@ Config in `~/.config/prompt-library/config.json` (`directory`, `hide_delay_ms`).
 ## Development
 
 ```bash
-.venv/bin/python -m pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
+.venv/bin/python -m pip install -e ".[dev]"   # app + pytest, pytest-qt, ruff
 .venv/bin/python -m pytest        # tests (headless, Qt offscreen)
 .venv/bin/ruff check .            # lint
 ```
