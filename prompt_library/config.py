@@ -23,6 +23,7 @@ APP_DIRNAME = "prompt-library"
 DEFAULTS = {
     "directory": "",        # folder to scan; empty => the user will be prompted for one
     "hide_delay_ms": 250,   # ms after copying before hiding to the tray
+    "selected_suffix": "",  # stem of the sticky suffix prompt appended on copy
 }
 
 

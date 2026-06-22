@@ -76,6 +76,11 @@ EMPTY_DIALOG_WIDTH = 440  # width used for the "no prompts / no match" message
 MAX_COLS = 5              # the grid is at most MAX_COLS x MAX_COLS
 MAX_GRID = MAX_COLS * MAX_COLS  # 25 cards fit without scroll; search to see more
 
+# Prompts whose filename stem starts with this go into the "suffix" section:
+# selecting one appends its text to whatever main prompt is copied next.
+SUFFIX_PREFIX = "Suffix"
+SUFFIX_SEPARATOR = "\n\n"  # placed between the main prompt and the suffix on copy
+
 # --- animated scrim (twinkling starfield + shooting stars) ---
 SCRIM_FPS = 32               # animation refresh rate while the overlay is visible
 STAR_COUNT = 110             # static background stars
@@ -202,6 +207,15 @@ QFrame#card {
     background: #2e303b; border: 1px solid #3a3d46; border-radius: 12px;
 }
 QFrame#card:hover { background: #36405a; border: 1px solid #4c8bf5; }
+QFrame#card[selected="true"] {
+    background: #2b3c63; border: 2px solid #4c8bf5;
+}
+QFrame#card[selected="true"]:hover { background: #324672; border: 2px solid #6fa0ff; }
+QLabel#section {
+    color: #9aa0b4; font-size: 11px; font-weight: bold;
+    text-transform: uppercase; letter-spacing: 1px;
+}
+QFrame#sep { background: #3a3d4a; max-height: 1px; min-height: 1px; }
 QLabel#name { color: #e8e8ee; font-size: 13px; }
 QLabel#badge {
     color: #cdd2ff; background: #404663; border-radius: 6px;
@@ -321,6 +335,7 @@ class PromptCard(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(CARD_WIDTH, CARD_HEIGHT)
         self.setToolTip(name)
+        self.setProperty("selected", False)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(11, 9, 11, 9)
@@ -342,6 +357,13 @@ class PromptCard(QFrame):
             self.clicked.emit()
         super().mousePressEvent(event)
 
+    def set_selected(self, on: bool) -> None:
+        """Toggle the highlighted state (used by suffix cards)."""
+        self.setProperty("selected", bool(on))
+        # A dynamic property change needs a style re-polish to take effect.
+        self.style().unpolish(self)
+        self.style().polish(self)
+
 
 class MainWindow(QWidget):
     def __init__(self, app: QApplication):
@@ -351,8 +373,12 @@ class MainWindow(QWidget):
         self.config = load_config()
         self.hide_delay_ms = int(self.config.get("hide_delay_ms", 250))
         self.directory = ""
-        self.prompts: list[dict] = []   # [{name, path}]
+        self.prompts: list[dict] = []   # [{name, path}] — main prompts
         self.visible: list[dict] = []
+        self.suffixes: list[dict] = []  # [{name, path}] — Suffix* prompts
+        self._suffix_cards: dict[str, PromptCard] = {}  # stem -> card
+        # Sticky selection: the stem of the suffix appended on copy ("" = none).
+        self.selected_suffix: str = self.config.get("selected_suffix", "")
         self._tray_hint_shown = False
         self._autohide_armed = False
         self._suppress_autohide = False
@@ -449,6 +475,30 @@ class MainWindow(QWidget):
         grid_row.addStretch(1)
         root.addLayout(grid_row)
 
+        # Suffix section: cards for Suffix* prompts. Selecting one only
+        # highlights it; its text is appended to whatever main prompt is copied.
+        self.suffix_section = QWidget()
+        suffix_box = QVBoxLayout(self.suffix_section)
+        suffix_box.setContentsMargins(0, 4, 0, 0)
+        suffix_box.setSpacing(8)
+        sep = QFrame()
+        sep.setObjectName("sep")
+        suffix_box.addWidget(sep)
+        header = QLabel("Suffix prompts")
+        header.setObjectName("section")
+        suffix_box.addWidget(header)
+        suffix_row = QHBoxLayout()
+        suffix_row.setContentsMargins(0, 0, 0, 0)
+        suffix_row.addStretch(1)
+        self.suffix_host = QWidget()
+        self.suffix_host.setObjectName("listhost")
+        self.suffix_flow = FlowLayout(self.suffix_host, margin=0, spacing=CARD_SPACING)
+        suffix_row.addWidget(self.suffix_host)
+        suffix_row.addStretch(1)
+        suffix_box.addLayout(suffix_row)
+        self.suffix_section.setVisible(False)
+        root.addWidget(self.suffix_section)
+
         self.status_lbl = QLabel("")
         self.status_lbl.setObjectName("status")
         root.addWidget(self.status_lbl)
@@ -479,12 +529,26 @@ class MainWindow(QWidget):
         directory = self.config.get("directory", "")
         self.directory = directory if directory and Path(directory).is_dir() else ""
         self.prompts = []
+        self.suffixes = []
         if self.directory:
             files = sorted(
                 Path(self.directory).glob("*.prompt"),
                 key=lambda p: p.stem.lower(),
             )
-            self.prompts = [{"name": p.stem, "path": str(p)} for p in files]
+            for p in files:
+                entry = {"name": p.stem, "path": str(p)}
+                if p.stem.startswith(SUFFIX_PREFIX):
+                    self.suffixes.append(entry)
+                else:
+                    self.prompts.append(entry)
+        # Drop a sticky selection that no longer exists in this folder.
+        if self.selected_suffix and self.selected_suffix not in {
+            s["name"] for s in self.suffixes
+        }:
+            self.selected_suffix = ""
+            self.config["selected_suffix"] = ""
+            save_config(self.config)
+        self.rebuild_suffixes()
         self.rebuild_list()
 
     def rebuild_list(self) -> None:
@@ -517,6 +581,40 @@ class MainWindow(QWidget):
 
         self._fit_dialog()
 
+    @staticmethod
+    def _suffix_label(name: str) -> str:
+        """Drop the 'Suffix' prefix for a cleaner label (the header names the section)."""
+        rest = name[len(SUFFIX_PREFIX):].lstrip(" -_:·").strip()
+        return rest or name
+
+    def rebuild_suffixes(self) -> None:
+        """(Re)build the suffix cards; selection comes from self.selected_suffix."""
+        while self.suffix_flow.count():
+            item = self.suffix_flow.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        self._suffix_cards = {}
+
+        self.suffix_section.setVisible(bool(self.suffixes))
+        for s in self.suffixes[:MAX_GRID]:
+            card = PromptCard(self._suffix_label(s["name"]), "")
+            card.set_selected(s["name"] == self.selected_suffix)
+            card.clicked.connect(lambda ss=s: self._toggle_suffix(ss))
+            self.suffix_flow.addWidget(card)
+            self._suffix_cards[s["name"]] = card
+
+    def _toggle_suffix(self, suffix: dict) -> None:
+        """Select a suffix, or deselect it if already selected (persisted in config)."""
+        name = suffix["name"]
+        self.selected_suffix = "" if self.selected_suffix == name else name
+        self.config["selected_suffix"] = self.selected_suffix
+        save_config(self.config)
+        # Update highlight in place; no resize needed.
+        for stem, card in self._suffix_cards.items():
+            card.set_selected(stem == self.selected_suffix)
+
     def _update_path_label(self) -> None:
         if not self.directory:
             self.path_lbl.setText("No folder selected")
@@ -526,6 +624,16 @@ class MainWindow(QWidget):
             text += f"  ·  showing first {MAX_GRID}, refine your search"
         self.path_lbl.setText(text)
 
+    @staticmethod
+    def _grid_size(total: int, shown: int) -> tuple[int, int]:
+        """Pixel (width, height) of a compact grid: columns fixed by ``total``,
+        rows by what is currently ``shown`` (both capped at MAX_GRID)."""
+        cols, _ = grid_dims(min(total, MAX_GRID))
+        rows = math.ceil(min(shown, MAX_GRID) / cols)
+        width = cols * CARD_WIDTH + (cols - 1) * CARD_SPACING
+        height = rows * CARD_HEIGHT + (rows - 1) * CARD_SPACING
+        return width, height
+
     def _fit_dialog(self) -> None:
         """Size the grid and dialog to a compact grid (no scrolling).
 
@@ -533,20 +641,26 @@ class MainWindow(QWidget):
         dialog does not jump around as a live search narrows the matches; only
         the row count (height) adapts to what is currently shown.
         """
-        if self.prompts and self.visible:
-            cols, _ = grid_dims(min(len(self.prompts), MAX_GRID))
-            shown = min(len(self.visible), MAX_GRID)
-            rows = math.ceil(shown / cols)
-            inner_w = cols * CARD_WIDTH + (cols - 1) * CARD_SPACING
-            inner_h = rows * CARD_HEIGHT + (rows - 1) * CARD_SPACING
-            dialog_w = max(MIN_DIALOG_WIDTH, inner_w + 2 * DIALOG_MARGIN)
+        has_main = bool(self.prompts and self.visible)
+        if has_main:
+            inner_w, inner_h = self._grid_size(len(self.prompts), len(self.visible))
         else:
             inner_w = EMPTY_DIALOG_WIDTH - 2 * DIALOG_MARGIN
             inner_h = CARD_HEIGHT
-            dialog_w = EMPTY_DIALOG_WIDTH
 
         # Fixing the grid size makes the FlowLayout wrap at exactly `cols`.
         self.list_host.setFixedSize(inner_w, inner_h)
+
+        # The suffix grid sizes itself the same way; the dialog widens to fit
+        # whichever section is broader so neither grid wraps off-screen.
+        content_w = inner_w
+        if self.suffixes:
+            suffix_w, suffix_h = self._grid_size(len(self.suffixes), len(self.suffixes))
+            self.suffix_host.setFixedSize(suffix_w, suffix_h)
+            content_w = max(content_w, suffix_w)
+
+        floor = MIN_DIALOG_WIDTH if has_main else EMPTY_DIALOG_WIDTH
+        dialog_w = max(floor, content_w + 2 * DIALOG_MARGIN)
         self.dialog_frame.setFixedWidth(dialog_w)
         # Recompute the frame layout now: after cards are added/removed the
         # layout's sizeHint is stale until the next event loop, so reading it
@@ -575,9 +689,28 @@ class MainWindow(QWidget):
             self.tray.showMessage(APP_NAME, f"Read error: {exc}",
                                   QSystemTrayIcon.Critical, 3000)
             return
+        status = f"✓ Copied: {prompt['name']}"
+        suffix_text = self._selected_suffix_text()
+        if suffix_text is not None:
+            text = text + SUFFIX_SEPARATOR + suffix_text
+            status += f"  +  {self.selected_suffix}"
         QApplication.clipboard().setText(text)
-        self._flash_status(f"✓ Copied: {prompt['name']}")
+        self._flash_status(status)
         QTimer.singleShot(self.hide_delay_ms, self.hide_to_tray)
+
+    def _selected_suffix_text(self) -> str | None:
+        """Text of the sticky suffix prompt, or None if none is selected/readable."""
+        if not self.selected_suffix:
+            return None
+        entry = next(
+            (s for s in self.suffixes if s["name"] == self.selected_suffix), None
+        )
+        if entry is None:
+            return None
+        try:
+            return Path(entry["path"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
 
     def choose_directory(self) -> None:
         start = self.config.get("directory") or str(Path.home())

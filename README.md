@@ -25,6 +25,10 @@ of working with LLMs.
 - Remembers the last folder used; on first launch it offers to pick one.
 - **Global hotkey `Super+Shift+P`** to show the window from anywhere.
 - Search box with renumbering of the `Alt+N` shortcuts over the filtered results.
+- **Suffix prompts for composition:** prompts named `Suffix*.prompt` appear in a
+  separate section. Selecting one (it just highlights — sticky across opens, click
+  again to clear) appends its text to whatever main prompt you copy next, so you can
+  pin a reusable modifier like "translate to Spanish" onto any prompt.
 
 ## Interface
 
@@ -40,6 +44,30 @@ of working with LLMs.
 - **Adjustable appearance** from the constants at the top of `prompt_library/app.py`:
   `CARD_WIDTH`, `CARD_HEIGHT`, `MAX_COLS`, `MIN_DIALOG_WIDTH`, and the scrim animation
   (`SCRIM_FPS`, `STAR_COUNT`, `METEOR_MAX`, `METEOR_SPAWN_CHANCE`, `STAR_COLOR`, `METEOR_COLOR`).
+
+## Composing with suffix prompts
+
+Any prompt whose filename starts with **`Suffix`** (e.g. `Suffix in spanish.prompt`)
+is shown in a separate **Suffix prompts** section below the main grid, with the
+`Suffix` prefix dropped from its label. These are reusable *modifiers* you pin onto
+your prompts instead of copying them on their own.
+
+<p align="center">
+  <img src="assets/suffix-prompts.png" alt="The selector showing a 3×3 grid of main prompts above a 'Suffix prompts' section, with the 'in spanish' suffix card highlighted" width="520">
+</p>
+
+How it works:
+
+1. **Click a suffix card to select it** — it just highlights (it does *not* copy or
+   close). Click it again to deselect.
+2. **Copy any main prompt** (click or `Alt+N`). The clipboard gets the main prompt,
+   a blank line, then the selected suffix's text — so you can append "translate to
+   Spanish", "be concise", etc. to whatever you copy.
+3. **The selection is sticky:** it stays selected the next time you open the selector,
+   until you click it again to clear it.
+
+For example, with **`Suffix in spanish`** selected, copying **`explain code`** puts both
+on the clipboard: the body of `explain code`, then the body of `Suffix in spanish`.
 
 ## Why `Super+Shift+P` and not `Super+P`
 

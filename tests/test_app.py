@@ -143,3 +143,113 @@ def test_grid_renders_full_5x5(qapp, monkeypatch, tmp_path):
     win.hide()
     win.deleteLater()
     assert (cols, rows) == (5, 5)
+
+
+# ---------- suffix prompts (composition) ----------
+from prompt_library.app import SUFFIX_SEPARATOR  # noqa: E402
+
+
+@pytest.fixture
+def suffix_dir(tmp_path):
+    """Two main prompts plus two Suffix* prompts."""
+    (tmp_path / "alpha.prompt").write_text("ALPHA BODY", encoding="utf-8")
+    (tmp_path / "beta.prompt").write_text("BETA BODY", encoding="utf-8")
+    (tmp_path / "Suffix in spanish.prompt").write_text("SUFFIX ES", encoding="utf-8")
+    (tmp_path / "Suffix terse.prompt").write_text("SUFFIX TERSE", encoding="utf-8")
+    return tmp_path
+
+
+def _make_window(qapp, monkeypatch, directory, selected_suffix=""):
+    """Build a MainWindow with load/save_config redirected (save is captured)."""
+    cfg = {
+        "directory": str(directory),
+        "hide_delay_ms": 0,
+        "selected_suffix": selected_suffix,
+    }
+    monkeypatch.setattr(app_module, "load_config", lambda: dict(cfg))
+    saved = {}
+    monkeypatch.setattr(app_module, "save_config", lambda c: saved.update(c))
+    win = MainWindow(qapp)
+    win._saved = saved  # test-only handle on the last persisted config
+    return win
+
+
+@pytest.fixture
+def suffix_window(qapp, monkeypatch, suffix_dir):
+    win = _make_window(qapp, monkeypatch, suffix_dir)
+    yield win
+    win.deleteLater()
+
+
+def test_suffix_split_separates_prefixed_prompts(suffix_window):
+    assert [p["name"] for p in suffix_window.prompts] == ["alpha", "beta"]
+    assert [s["name"] for s in suffix_window.suffixes] == [
+        "Suffix in spanish", "Suffix terse",
+    ]
+
+
+def test_suffix_label_strips_prefix(suffix_window):
+    labels = [suffix_window._suffix_label(s["name"]) for s in suffix_window.suffixes]
+    assert labels == ["in spanish", "terse"]
+
+
+def test_select_suffix_highlights_and_persists(suffix_window):
+    suffix_window._toggle_suffix(suffix_window.suffixes[0])
+    assert suffix_window.selected_suffix == "Suffix in spanish"
+    assert suffix_window._saved["selected_suffix"] == "Suffix in spanish"
+    assert suffix_window._suffix_cards["Suffix in spanish"].property("selected") is True
+    assert suffix_window._suffix_cards["Suffix terse"].property("selected") is False
+
+
+def test_reselecting_same_suffix_deselects(suffix_window):
+    suffix_window._toggle_suffix(suffix_window.suffixes[0])
+    suffix_window._toggle_suffix(suffix_window.suffixes[0])
+    assert suffix_window.selected_suffix == ""
+    assert suffix_window._saved["selected_suffix"] == ""
+    assert suffix_window._suffix_cards["Suffix in spanish"].property("selected") is False
+
+
+def test_clicking_suffix_card_toggles_selection(suffix_window):
+    # Exercise the real mouse path: the card's clicked signal -> _toggle_suffix.
+    card = suffix_window._suffix_cards["Suffix terse"]
+    card.clicked.emit()
+    assert suffix_window.selected_suffix == "Suffix terse"
+    assert card.property("selected") is True
+    card.clicked.emit()  # click again deselects
+    assert suffix_window.selected_suffix == ""
+    assert card.property("selected") is False
+
+
+def test_copy_composes_main_plus_selected_suffix(suffix_window):
+    suffix_window._toggle_suffix(suffix_window.suffixes[0])  # "Suffix in spanish"
+    suffix_window.trigger_index(1)  # main "beta"
+    expected = "BETA BODY" + SUFFIX_SEPARATOR + "SUFFIX ES"
+    assert QApplication.clipboard().text() == expected
+
+
+def test_copy_without_selection_is_plain(suffix_window):
+    suffix_window.trigger_index(0)  # main "alpha"
+    assert QApplication.clipboard().text() == "ALPHA BODY"
+
+
+def test_sticky_selection_applied_on_init(qapp, monkeypatch, suffix_dir):
+    win = _make_window(qapp, monkeypatch, suffix_dir, selected_suffix="Suffix terse")
+    assert win.selected_suffix == "Suffix terse"
+    assert win._suffix_cards["Suffix terse"].property("selected") is True
+    win.deleteLater()
+
+
+def test_stale_selection_dropped_on_load(qapp, monkeypatch, suffix_dir):
+    win = _make_window(qapp, monkeypatch, suffix_dir, selected_suffix="Suffix gone")
+    assert win.selected_suffix == ""
+    assert win._saved.get("selected_suffix") == ""  # the clear was persisted
+    win.deleteLater()
+
+
+def test_only_suffix_folder_keeps_section(qapp, monkeypatch, tmp_path):
+    (tmp_path / "Suffix only.prompt").write_text("X", encoding="utf-8")
+    win = _make_window(qapp, monkeypatch, tmp_path)
+    assert win.prompts == []
+    assert len(win.suffixes) == 1
+    assert not win.suffix_section.isHidden()
+    win.deleteLater()
