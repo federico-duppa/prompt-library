@@ -328,6 +328,7 @@ class PromptCard(QFrame):
     """A fixed-size clickable card that represents a prompt."""
 
     clicked = Signal()
+    shift_clicked = Signal()
 
     def __init__(self, name: str, hotkey: str):
         super().__init__()
@@ -354,7 +355,14 @@ class PromptCard(QFrame):
 
     def mousePressEvent(self, event):  # noqa: N802
         if event.button() == Qt.LeftButton:
-            self.clicked.emit()
+            if event.modifiers() & Qt.ShiftModifier:
+                self.shift_clicked.emit()
+            else:
+                self.clicked.emit()
+            # Accept so the press does not propagate to MainWindow.mousePressEvent,
+            # which would hide the overlay (a click "outside" the dialog).
+            event.accept()
+            return
         super().mousePressEvent(event)
 
     def set_selected(self, on: bool) -> None:
@@ -577,6 +585,7 @@ class MainWindow(QWidget):
                 hotkey = f"Alt+{i + 1}" if i < MAX_HOTKEYS else ""
                 card = PromptCard(p["name"], hotkey)
                 card.clicked.connect(lambda pp=p: self.copy_prompt(pp))
+                card.shift_clicked.connect(lambda pp=p: self.copy_prompt(pp))
                 self.flow.addWidget(card)
 
         self._fit_dialog()
@@ -600,8 +609,10 @@ class MainWindow(QWidget):
         self.suffix_section.setVisible(bool(self.suffixes))
         for s in self.suffixes[:MAX_GRID]:
             card = PromptCard(self._suffix_label(s["name"]), "")
+            card.setToolTip("Click to select · Shift+click to copy only this suffix")
             card.set_selected(s["name"] == self.selected_suffix)
             card.clicked.connect(lambda ss=s: self._toggle_suffix(ss))
+            card.shift_clicked.connect(lambda ss=s: self._copy_suffix_only(ss))
             self.suffix_flow.addWidget(card)
             self._suffix_cards[s["name"]] = card
 
@@ -682,21 +693,38 @@ class MainWindow(QWidget):
         if 0 <= idx < len(self.visible):
             self.copy_prompt(self.visible[idx])
 
-    def copy_prompt(self, prompt: dict) -> None:
+    def _read_text(self, path: str) -> str | None:
+        """Read a prompt file, or surface a tray error and return None."""
         try:
-            text = Path(prompt["path"]).read_text(encoding="utf-8", errors="replace")
+            return Path(path).read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             self.tray.showMessage(APP_NAME, f"Read error: {exc}",
                                   QSystemTrayIcon.Critical, 3000)
+            return None
+
+    def _copy_and_hide(self, text: str, status: str) -> None:
+        QApplication.clipboard().setText(text)
+        self._flash_status(status)
+        QTimer.singleShot(self.hide_delay_ms, self.hide_to_tray)
+
+    def copy_prompt(self, prompt: dict) -> None:
+        text = self._read_text(prompt["path"])
+        if text is None:
             return
         status = f"✓ Copied: {prompt['name']}"
         suffix_text = self._selected_suffix_text()
         if suffix_text is not None:
             text = text + SUFFIX_SEPARATOR + suffix_text
-            status += f"  +  {self.selected_suffix}"
-        QApplication.clipboard().setText(text)
-        self._flash_status(status)
-        QTimer.singleShot(self.hide_delay_ms, self.hide_to_tray)
+            status += f"  +  {self._suffix_label(self.selected_suffix)}"
+        self._copy_and_hide(text, status)
+
+    def _copy_suffix_only(self, suffix: dict) -> None:
+        """Shift+click on a suffix: copy just that suffix's text (no main prompt)."""
+        text = self._read_text(suffix["path"])
+        if text is None:
+            return
+        label = self._suffix_label(suffix["name"])
+        self._copy_and_hide(text, f"✓ Copied suffix: {label}")
 
     def _selected_suffix_text(self) -> str | None:
         """Text of the sticky suffix prompt, or None if none is selected/readable."""

@@ -58,13 +58,15 @@ your prompts instead of copying them on their own.
 
 How it works:
 
-1. **Click a suffix card to select it** — it just highlights (it does *not* copy or
-   close). Click it again to deselect.
+1. **Click a suffix card to select it** — it just highlights, and the overlay stays
+   open (it does *not* copy or close). Click it again to deselect.
 2. **Copy any main prompt** (click or `Alt+N`). The clipboard gets the main prompt,
    a blank line, then the selected suffix's text — so you can append "translate to
    Spanish", "be concise", etc. to whatever you copy.
 3. **The selection is sticky:** it stays selected the next time you open the selector,
    until you click it again to clear it.
+4. **Shift+click a suffix to copy *only* that suffix** (and close), for when you just
+   need the modifier text on its own — without touching the sticky selection.
 
 For example, with **`Suffix in spanish`** selected, copying **`explain code`** puts both
 on the clipboard: the body of `explain code`, then the body of `Suffix in spanish`.

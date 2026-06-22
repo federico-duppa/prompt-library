@@ -220,6 +220,37 @@ def test_clicking_suffix_card_toggles_selection(suffix_window):
     assert card.property("selected") is False
 
 
+def test_card_press_is_accepted_so_overlay_stays_open(suffix_window):
+    # A plain left press on a card must be accepted (not propagated to
+    # MainWindow.mousePressEvent, which would hide the overlay on selection).
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    card = suffix_window._suffix_cards["Suffix terse"]
+    ev = QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(5, 5), QPointF(5, 5),
+        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
+    )
+    card.mousePressEvent(ev)
+    assert ev.isAccepted()
+    assert suffix_window.selected_suffix == "Suffix terse"  # plain click selects
+
+
+def test_shift_click_suffix_copies_only_that_suffix(suffix_window):
+    suffix_window._toggle_suffix(suffix_window.suffixes[0])  # selects "Suffix in spanish"
+    card = suffix_window._suffix_cards["Suffix terse"]
+    card.shift_clicked.emit()  # shift+click a *different* suffix
+    assert QApplication.clipboard().text() == "SUFFIX TERSE"  # only the suffix body
+    assert suffix_window.selected_suffix == "Suffix in spanish"  # selection unchanged
+
+
+def test_shift_click_main_card_still_copies(suffix_window):
+    # findChildren keeps insertion order, which is the visible order (alpha, beta).
+    first_main = suffix_window.list_host.findChildren(PromptCard)[0]
+    first_main.shift_clicked.emit()
+    assert QApplication.clipboard().text() == "ALPHA BODY"
+
+
 def test_copy_composes_main_plus_selected_suffix(suffix_window):
     suffix_window._toggle_suffix(suffix_window.suffixes[0])  # "Suffix in spanish"
     suffix_window.trigger_index(1)  # main "beta"
